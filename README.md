@@ -26,3 +26,7 @@ Send event:
 
 Send fatal:
   - GoogleReporter.shared.exception("error",true)
+
+**To Use Objective -C :
+
+Please #import <GoogleReporter/GoogleReporter-Swift.h>
