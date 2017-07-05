@@ -1,5 +1,12 @@
 # GoogleReporter
-Google Report Custom
+<h>Google Report Custom</h>
+
+---------------------------------------------
+++Note: 
+**This dependcies : 
+  - RxSwift
+  - RxCocoa
+
 Using custom report from Google Analytic but only using some features :
 + Send event
 + Send window screens
