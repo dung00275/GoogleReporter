@@ -22,7 +22,7 @@ Send report:
   - GoogleReporter.shared.screenView(nName)
 
 Send event:
-  - GoogleReporter.shared.screenView(nName)
+  - GoogleReporter.shared.event("category","action")
 
 Send fatal:
   - GoogleReporter.shared.exception("error",true)
