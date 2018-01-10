@@ -1,32 +1,53 @@
 # GoogleReporter
 <h>Google Report Custom</h>
-
 ---------------------------------------------
-++Note: 
+<h2>++Note: </h2>
 
 ++++++++++++++++++++
 
-**This dependcies : 
+<b><i>**This dependcies : </i></b>
   - RxSwift
   - RxCocoa
 
-Using custom report from Google Analytic but only using some features :
+<blockquote> Using custom report from Google Analytic but only using some features :</blockquote>
+
+---------------------------------------------
+
 + Send event
 + Send window screens
 + Send fatal error
++ Send Timing
 
-*How to use:
-You must set your tracker ID UA-XXXXX-XX with GoogleReporter.shared.configure()
+---------------------------------------------
 
-Send report:
-  - GoogleReporter.shared.screenView(nName)
+<h3>*How to use:</h3>
+<i>You must set your tracker ID UA-XXXXX-XX with GoogleReporter.shared.configure()</i>
 
-Send event:
-  - GoogleReporter.shared.event("category","action")
+<h3>Function:</h3>
+<table style="width:100%">
+  <tr>
+    <th>Send Type</th>
+    <th>Syntax</th> 
+  </tr>
+  <tr>
+    <td>ScreenView</td>
+    <td>GoogleReporter.shared.screenView(nName)</td>
+  </tr>
+  <tr>
+    <td>Event</td>
+    <td>GoogleReporter.shared.event("category","action")</td>
+  </tr>
+  <tr>
+    <td>Timing</td>
+    <td>GoogleReporter.shared.timing("category","action"</td>
+  </tr>
+  <tr>
+    <td>Fatal</td>
+    <td>GoogleReporter.shared.exception("error",true)</td>
+  </tr>
+</table>
+ 
+<h3>**To Use Objective -C :</h3>
 
-Send fatal:
-  - GoogleReporter.shared.exception("error",true)
+- Please #import <GoogleReporter/GoogleReporter-Swift.h>
 
-**To Use Objective -C :
-
-Please #import <GoogleReporter/GoogleReporter-Swift.h>
