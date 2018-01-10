@@ -116,22 +116,9 @@ fileprivate class GoogleReporterUploadService {
     
     // Give me the tasks
     private func clientUpload(with request: URLRequest) -> Observable<Bool> {
-        return Observable.create({ (s) -> Disposable in
-            let session = URLSession.shared
-            let t = session.dataTask(with: request, completionHandler: { (_, _, e) in
-                guard let e = e else {
-                    s.onNext(true)
-                    s.onCompleted()
-                    return
-                }
-                s.onError(e)
-            })
-            t.resume()
-            return Disposables.create {
-                guard !(t.state == .completed) else { return }
-                t.cancel()
-            }
-        }).do(onDispose: { [weak self] in
+        return URLSession.shared.rx.data(request: request)
+            .map({ _ in return true })
+            .do(onDispose: { [weak self] in
             self?.isUploading = false
         })
     }
