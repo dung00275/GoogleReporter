@@ -12,7 +12,7 @@ import RxSwift
 import RxCocoa
 
 infix operator +
-func +<T:Hashable,V>(lhs: [T: V], rhs: [T: V]) -> [T: V] {
+func +<T, V>(lhs: [T: V], rhs: [T: V]) -> [T: V] {
     var lhs = lhs
     rhs.forEach({ lhs[$0.key] = $0.value })
     return lhs
@@ -25,28 +25,32 @@ extension URLQueryItem {
 }
 
 extension Array {
-    func subArray(with maxItem: Int) -> [Element] {
+    subscript(from maxItem: Int) -> [Element] {
         let nItems = Swift.min(self.count, maxItem)
         return Array(self[0..<nItems])
     }
 }
 
-func -=<E: Equatable>(lhs: inout [E], rhs:[E]) {
+func -=<E: Hashable>(lhs: inout [E], rhs:[E]) {
     guard lhs.count > 0, rhs.count > 0 else {
         return
     }
-    
-    rhs.forEach({
-        guard let idx = lhs.index(of: $0) else {
-            return
+    var n = Set(lhs)
+    defer {
+        autoreleasepool { () -> () in
+            n.removeAll()
         }
-        lhs.remove(at: idx)
-    })
+    }
+    n.subtract(rhs)
+    lhs = Array(n)
 }
 
-enum Send {
-    case one([String: String])
-    case multiple([[String: String]])
+typealias Parameters = [ReportTask]
+public typealias ParameterContent = [String: String]
+fileprivate let baseURL: URL = "https://www.google-analytics.com/"
+internal enum Send {
+    case one(ParameterContent)
+    case multiple([ParameterContent])
     
     var path: String {
         switch self {
@@ -62,13 +66,11 @@ enum Send {
     }
     
     var request: URLRequest {
-        let baseURL = URL(string: "https://www.google-analytics.com/")!
-        let characterSet = CharacterSet.urlPathAllowed
         switch self {
         case .one(let parameters):
             // Embed url
             var componets = URLComponents(url: baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)
-            componets?.queryItems = parameters.map({ URLQueryItem(name: $0.0, value: $0.1.addingPercentEncoding(withAllowedCharacters: characterSet)) })
+            componets?.queryItems = parameters.map({ URLQueryItem(name: $0.0, value: $0.1) })
             guard let url =  componets?.url else {
                 fatalError("Error create Url post")
             }
@@ -81,56 +83,60 @@ enum Send {
             request.httpMethod = method
             
             // body
-            let query = allValues.map({ $0.map({ URLQueryItem(name: $0.0, value: $0.1.addingPercentEncoding(withAllowedCharacters: characterSet)).query }).joined(separator: "&") }).joined(separator: "\n")
+            let query = allValues.map({ $0.map({ URLQueryItem(name: $0.0, value: $0.1).query }).joined(separator: "&") }).joined(separator: "\n")
             request.httpBody = query.data(using: .utf8)
             return request
         }
     }
 }
 
-fileprivate class ReportTask: NSObject, NSCoding {
+struct ReportTask: Codable, Hashable {
+    var hashValue: Int {
+        return self.identify
+    }
     // Using for find
     let identify: Int
-    
     // Keep save content
-    let content: [String: String]
-    
-    init(_ content: [String: String]) {
+    let content: ParameterContent
+    init(_ content: ParameterContent) {
         self.content = content
         self.identify = Int(Date().timeIntervalSince1970)
-        super.init()
-    }
-    
-    required init?(coder aDecoder: NSCoder) {
-        guard let c = aDecoder.decodeObject(forKey: "content") as? [String: String] else {
-            return nil
-        }
-        let i = aDecoder.decodeInteger(forKey: "identify")
-        self.content = c
-        self.identify = i
-        super.init()
-    }
-    
-    func encode(with aCoder: NSCoder) {
-        aCoder.encode(self.content, forKey: "content")
-        aCoder.encode(self.identify, forKey: "identify")
-    }
-    
-    override func isEqual(_ object: Any?) -> Bool {
-        guard let o = object as? ReportTask else {
-            return false
-        }
-        return self.identify == o.identify
     }
 }
 
+func ==(lhs: ReportTask, rhs: ReportTask) -> Bool {
+    return lhs.identify == rhs.identify
+}
+
+
 // I 'll go to upload
 fileprivate class GoogleReporterUploadService {
-     // Please check me
-     var isUploading: Bool = false
+    // Please check me
+    var isUploading: Bool = false
     
     // Give me the tasks
-    func upload(from tasks: [ReportTask]?) -> Observable<[ReportTask]> {
+    private func clientUpload(with request: URLRequest) -> Observable<Bool> {
+        return Observable.create({ (s) -> Disposable in
+            let session = URLSession.shared
+            let t = session.dataTask(with: request, completionHandler: { (_, _, e) in
+                guard let e = e else {
+                    s.onNext(true)
+                    s.onCompleted()
+                    return
+                }
+                s.onError(e)
+            })
+            t.resume()
+            return Disposables.create {
+                guard !(t.state == .completed) else { return }
+                t.cancel()
+            }
+        }).do(onDispose: { [weak self] in
+            self?.isUploading = false
+        })
+    }
+    
+    func upload(from tasks: Parameters?) -> Observable<Parameters> {
         guard let tasks = tasks, tasks.count > 0, !isUploading else {
             // No Task
             return Observable.empty()
@@ -144,54 +150,27 @@ fileprivate class GoogleReporterUploadService {
         }
         
         self.isUploading = true
-        return Observable.create({ (s) -> Disposable in
-            let session = URLSession.shared
-            let t = session.dataTask(with: type.request, completionHandler: { (_, _, e) in
-                guard let e = e else {
-                    s.onNext(tasks)
-                    s.onCompleted()
-                    return
-                }
-                s.onError(e)
-            })
-            t.resume()
-            return Disposables.create {
-                t.cancel()
-            }
-        }).do(onNext: { [weak self](_) in
-            // Free me to prepare other task
-            self?.isUploading = false
-        }, onError: { [weak self](_) in
-            // Free me to prepare other task
-            self?.isUploading = false
-        }).catchError({ (e) -> Observable<[ReportTask]> in
-            // Using Catch avoid error terminate signal
-            print("GA error: \(e.localizedDescription)")
-            return Observable.just([])
-        })
+        return self.clientUpload(with: type.request).map({ _ in tasks }).catchErrorJustReturn([])
     }
-    
 }
 
-// Maximum items 'll send
-fileprivate let maxItemsSend = 20
-
-// Buffer time send
-fileprivate let bufferSend: TimeInterval = 20
-
-// Max File prepare send
-fileprivate let maxItemsStorage = 40
-
-
 fileprivate class ManagerGoogleReporterTasks {
+    // Value tracking
+    struct StaticConfig {
+        // Maximum items 'll send
+        static let maxItemsSend = 20
+        // Buffer time send
+        static let bufferSend: TimeInterval = 20
+        // Max File prepare send
+        static let maxItemsStorage = 40
+    }
+    
     // I have multiply task
-    var tasks: Variable<[ReportTask]> = Variable([])
-    
-    let fileURL: URL?
-    
-    let disposeBag = DisposeBag()
-    let lock = NSLock()
-    let service = GoogleReporterUploadService()
+    private var tasks: Variable<Parameters> = Variable(Parameters())
+    private let fileURL: URL?
+    private let disposeBag = DisposeBag()
+    private let lock = NSLock()
+    private let service = GoogleReporterUploadService()
     
     // Tracking
     init() {
@@ -208,8 +187,18 @@ fileprivate class ManagerGoogleReporterTasks {
             }
             
             let size = attsFile[FileAttributeKey.size] as? Double ?? 0
-            if size > 0 {
-                tasks.value = NSKeyedUnarchiver.unarchiveObject(withFile: f.path) as? [ReportTask] ?? []
+            guard size > 0 else { break LoadOldFile }
+            let decoder = JSONDecoder()
+            do{
+                let data = try Data(contentsOf: f)
+                let values = try decoder.decode(Parameters.self, from: data)
+                tasks.value = values
+            } catch {
+                print(error.localizedDescription)
+                // try to remove file because it has old system
+                try? m.removeItem(at: f)
+                // Create a new
+                m.createFile(atPath: f.path, contents: nil, attributes: nil)
             }
         }
         
@@ -218,68 +207,67 @@ fileprivate class ManagerGoogleReporterTasks {
             guard let wSelf = self else {
                 return false
             }
-            return wSelf.tasks.value.count >= maxItemsStorage && !wSelf.service.isUploading
-            }.flatMap({ [unowned self] in
-                self.service.upload(from: $0.subArray(with: maxItemsSend))
-            }).subscribe(onNext: { [weak self] in
-                guard $0.count > 0 else { return }
-                self?.removeTasks($0)
-                self?.saveTasks()
-            }).addDisposableTo(disposeBag)
+            return wSelf.tasks.value.count >= StaticConfig.maxItemsStorage && !wSelf.service.isUploading
+            }.map({ $0[from: StaticConfig.maxItemsSend] })
+            .bind(onNext: self.runUploadData).disposed(by: disposeBag)
         
         // Tracking at buffer time
-        Observable<Int>.interval(bufferSend, scheduler: SerialDispatchQueueScheduler(qos: .background)).filter { [weak self] (_) -> Bool in
+        Observable<Int>.interval(StaticConfig.bufferSend, scheduler: SerialDispatchQueueScheduler(qos: .background)).filter { [weak self] (_) -> Bool in
             guard let wSelf = self else {
                 return false
             }
             return !wSelf.service.isUploading
-            }.flatMap({ [unowned self] _ in
-                self.service.upload(from: self.tasks.value.subArray(with: maxItemsSend))
-            }).subscribe(onNext: { [weak self] in
-                guard $0.count > 0 else { return }
-                self?.removeTasks($0)
-                self?.saveTasks()
-            }).addDisposableTo(disposeBag)
+            }
+            .map({ [unowned self] _ in self.tasks.value[from: StaticConfig.maxItemsSend]})
+            .bind(onNext: self.runUploadData).disposed(by: disposeBag)
         
         // Tracking save when app prepare terminate
         let event1 = NotificationCenter.default.rx.notification(Notification.Name.UIApplicationWillTerminate, object: nil)
-        let event2 = NotificationCenter.default.rx.notification(Notification.Name.UIApplicationWillEnterForeground, object: nil)
+        let event2 = NotificationCenter.default.rx.notification(Notification.Name.UIApplicationDidEnterBackground, object: nil)
         
-        Observable.merge([event1, event2]).subscribe(onNext: { [weak self](_) in
-           self?.saveTasks()
-        }).addDisposableTo(disposeBag)
+        Observable.merge([event1, event2]).map({ _ in }).subscribe(onNext: { [weak self](_) in
+            self?.saveTasks()
+        }).disposed(by: disposeBag)
     }
     
-    func saveTasks() {
+    fileprivate func runUploadData(from data: Parameters) {
+        self.service.upload(from: data).filter({ $0.count > 0 })
+            .bind(onNext: self.removeTasks).disposed(by: disposeBag)
+    }
+    
+    fileprivate func saveTasks() {
         excuteInSafe {
             guard let f = self.fileURL else {
                 return
             }
-            let r = NSKeyedArchiver.archiveRootObject(self.tasks.value, toFile: f.path)
-            if !r {
-                print("Can't save!!!!")
+            let encoder = JSONEncoder()
+            do{
+                let data = try encoder.encode(self.tasks.value)
+                try data.write(to: f)
+            } catch {
+                print(error.localizedDescription)
             }
         }
     }
     
-    
-    func removeTasks(_ tasks:[ReportTask]) {
+    fileprivate func removeTasks(_ tasks:Parameters) {
         guard tasks.count > 0 else {
             return
         }
         self.excuteInSafe { [unowned self] in
             self.tasks.value -= tasks
         }
+        self.saveTasks()
     }
     
-    func addTask(with parameter:[String: String]) {
+    fileprivate func addTask(with parameter:ParameterContent) {
         let nTask = ReportTask(parameter)
         excuteInSafe {
             self.tasks.value.append(nTask)
         }
     }
     
-    func excuteInSafe(_ block: @escaping () ->()) {
+    fileprivate func excuteInSafe(_ block: @escaping () ->()) {
         defer {
             lock.unlock()
         }
@@ -288,69 +276,23 @@ fileprivate class ManagerGoogleReporterTasks {
     }
 }
 
-
-
+@objcMembers
 public class GoogleReporter: NSObject {
-    public static let shared = GoogleReporter()
     
+    public static let shared = GoogleReporter()
     public var quietMode = true
     
     private static let identifierKey = "GoogleReporter.uniqueUserIdentifier"
-    
     private var trackerId: String?
     private lazy var manager = ManagerGoogleReporterTasks()
-    
-    
-    public func configure(withTrackerId trackerId: String) {
-        self.trackerId = trackerId
-    }
-   
     private override init() {
         super.init()
     }
     
-    public func screenView(_ name: String, parameters: [String: String] = [:]) {
-        let data = parameters + ["cd": name]
-        send("screenView", parameters: data)
+    public func configure(withTrackerId trackerId: String) {
+        self.trackerId = trackerId
     }
     
-    public func event(_ category: String, action: String, label: String = "",
-                      parameters: [String: String] = [:]) {
-        let data = parameters + ["ec": category, "ea": action, "el": label]
-        
-        send("event", parameters: data)
-    }
-    
-    public func exception(_ description: String, isFatal: Bool,
-                          parameters: [String: String] = [:]) {
-        let data = parameters + ["exd": description, "exf": String(isFatal)]
-        send("exception", parameters: data)
-    }
-    
-    private func send(_ type:  String, parameters: [String: String]) {
-        guard let trackerId = trackerId else {
-            fatalError("You must set your tracker ID UA-XXXXX-XX with GoogleReporter.configure()")
-        }
-        let hasValue = parameters.keys.contains("v")
-        var queryArguments: [String: String] = [
-            "tid": trackerId,
-            "aid": appIdentifier,
-            "cid": uniqueUserIdentifier,
-            "an": appName,
-            "av": formattedVersion,
-            "ua": userAgent,
-            "ul": userLanguage,
-            "sr": screenResolution,
-            "t": type
-        ]
-        if !hasValue {
-            queryArguments["v"] = "1"
-        }
-        
-        
-        let arguments = queryArguments + parameters
-        manager.addTask(with: arguments)
-    }
     
     private lazy var uniqueUserIdentifier: String = {
         let defaults = UserDefaults.standard
@@ -362,10 +304,8 @@ public class GoogleReporter: NSObject {
             if !self.quietMode {
                 print("New GA user with identifier: ", identifier)
             }
-            
             return identifier
         }
-        
         return identifier
     }()
     
@@ -396,7 +336,7 @@ public class GoogleReporter: NSObject {
     }()
     
     private lazy var userLanguage: String = {
-        guard let locale = Locale.preferredLanguages.first, locale.characters.count > 0 else {
+        guard let locale = Locale.preferredLanguages.first, locale.count > 0 else {
             return "(not set)"
         }
         
@@ -407,4 +347,63 @@ public class GoogleReporter: NSObject {
         let size = UIScreen.main.bounds.size
         return "\(size.width)x\(size.height)"
     }()
+}
+
+// MARK: Public send
+extension GoogleReporter {
+    public func screenView(_ name: String, parameters: ParameterContent = [:]) {
+        let data = parameters + ["cd": name]
+        send("screenView", parameters: data)
+    }
+    
+    public func event(_ category: String, action: String, label: String = "",
+                      parameters: ParameterContent = [:]) {
+        let data = parameters + ["ec": category, "ea": action, "el": label]
+        send("event", parameters: data)
+    }
+    
+    public func timing(_ category: String, action: String, label: String = "",
+                       parameters: ParameterContent = [:]) {
+        let data = parameters + ["utc": category, "utv": action, "utl": label]
+        send("timing", parameters: data)
+    }
+    
+    public func exception(_ description: String, isFatal: Bool,
+                          parameters: ParameterContent = [:]) {
+        let data = parameters + ["exd": description, "exf": String(isFatal)]
+        send("exception", parameters: data)
+    }
+    
+    private func send(_ type:  String, parameters: ParameterContent) {
+        guard let trackerId = trackerId else {
+            fatalError("You must set your tracker ID UA-XXXXX-XX with GoogleReporter.configure()")
+        }
+        let hasValue = parameters.keys.contains("v")
+        var queryArguments: ParameterContent = [
+            "tid": trackerId,
+            "aid": appIdentifier,
+            "cid": uniqueUserIdentifier,
+            "an": appName,
+            "av": formattedVersion,
+            "ua": userAgent,
+            "ul": userLanguage,
+            "sr": screenResolution,
+            "t": type
+        ]
+        if !hasValue {
+            queryArguments["v"] = "1"
+        }
+        let arguments = queryArguments + parameters
+        manager.addTask(with: arguments)
+    }
+}
+
+// MARK: - Helper
+extension URL: ExpressibleByStringLiteral {
+    public init(stringLiteral value: String) {
+        guard let url = URL(string: value) else {
+            fatalError("Invalid value \(value)")
+        }
+        self = url
+    }
 }
