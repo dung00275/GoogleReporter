@@ -351,27 +351,51 @@ public class GoogleReporter: NSObject {
 
 // MARK: Public send
 extension GoogleReporter {
+    enum Report {
+        case screenView
+        case event
+        case timing
+        case exception
+        
+        var category: String {
+            switch self {
+            case .screenView:
+                return "screenView"
+            case .event:
+                return "event"
+            case .timing:
+                return "timing"
+            case .exception:
+                return "exception"
+            }
+        }
+        
+        func send(using reporter: GoogleReporter, with data: ParameterContent) {
+            reporter.send(self.category, parameters: data)
+        }
+    }
+    
     public func screenView(_ name: String, parameters: ParameterContent = [:]) {
         let data = parameters + ["cd": name]
-        send("screenView", parameters: data)
+        Report.screenView.send(using: self, with: data)
     }
     
     public func event(_ category: String, action: String, label: String = "",
                       parameters: ParameterContent = [:]) {
         let data = parameters + ["ec": category, "ea": action, "el": label]
-        send("event", parameters: data)
+        Report.event.send(using: self, with: data)
     }
     
     public func timing(_ category: String, action: String, label: String = "",
                        parameters: ParameterContent = [:]) {
         let data = parameters + ["utc": category, "utv": action, "utl": label]
-        send("timing", parameters: data)
+        Report.timing.send(using: self, with: data)
     }
     
     public func exception(_ description: String, isFatal: Bool,
                           parameters: ParameterContent = [:]) {
         let data = parameters + ["exd": description, "exf": String(isFatal)]
-        send("exception", parameters: data)
+        Report.exception.send(using: self, with: data)
     }
     
     private func send(_ type:  String, parameters: ParameterContent) {
